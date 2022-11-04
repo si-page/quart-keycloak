@@ -17,7 +17,13 @@ import aiofiles
 from jose import jwt as jose_jwt
 from quart import Quart, request, url_for, redirect, session, Response, session
 
-from quart_session_openid import DEFAULT_AUDIENCE, PROVIDER_KEYCLOAK, PROVIDER_AZURE_AD_V1, PROVIDER_AZURE_AD_V2
+from quart_session_openid import (
+    DEFAULT_AUDIENCE,
+    PROVIDER_KEYCLOAK,
+    PROVIDER_AZURE_AD_V1,
+    PROVIDER_AZURE_AD_V2,
+    PROVIDER_OKTA,
+)
 from quart_session_openid.utils import decorator_parametrized, AzureResource
 
 JWT_LEGACY = version.parse(jwt.__version__) < version.parse("2.0.0")
@@ -41,22 +47,25 @@ class OpenID(object):
     You may add multiple `OpenID` instances to your Quart app. When you do,
     provide a custom `route_login` and `route_auth` to prevent route overlap.
     """
-    def __init__(self,
-                 app: Quart,
-                 client_id: str,
-                 client_secret: str,
-                 configuration: str = None,
-                 provider: int = PROVIDER_KEYCLOAK,
-                 audience: Union[str, AzureResource] = DEFAULT_AUDIENCE,
-                 configuration_cache: int = 0,
-                 timeout_connect: int = 3,
-                 timeout_read: int = 3,
-                 scopes: List[str] = None,
-                 route_login: str = "/openid/login",
-                 route_auth: str = "/openid/auth",
-                 user_agent: str = "Quart-OpenID",
-                 azure_tenant_id: str = None,
-                 key_rotation_interval: int = 3600) -> None:
+
+    def __init__(
+        self,
+        app: Quart,
+        client_id: str,
+        client_secret: str,
+        configuration: str = None,
+        provider: int = PROVIDER_KEYCLOAK,
+        audience: Union[str, AzureResource] = DEFAULT_AUDIENCE,
+        configuration_cache: int = 0,
+        timeout_connect: int = 3,
+        timeout_read: int = 3,
+        scopes: List[str] = None,
+        route_login: str = "/openid/login",
+        route_auth: str = "/openid/auth",
+        user_agent: str = "Quart-OpenID",
+        azure_tenant_id: str = None,
+        key_rotation_interval: int = 3600,
+    ) -> None:
         """
         :param app: Quart app instance
         :param client_id: public identifier for apps, many OIDC providers
@@ -109,7 +118,9 @@ class OpenID(object):
             raise Exception("Azure AD v1 not supported, use v2")
         elif provider == PROVIDER_AZURE_AD_V2:
             if not azure_tenant_id:
-                raise Exception("Please specify the Azure tenant ID through parameter `azure_tenant_id`")
+                raise Exception(
+                    "Please specify the Azure tenant ID through parameter `azure_tenant_id`"
+                )
             url = f"https://login.microsoftonline.com/{self._azure_tenant_id}/v2.0/.well-known/openid-configuration"
             self._openid_configuration_url = f"{url}"
         else:
@@ -146,7 +157,9 @@ class OpenID(object):
 
         if not self._openid_configuration_url.startswith("http"):
             if not os.path.exists(self._openid_configuration_url):
-                raise Exception(f"Local file path '{self._openid_configuration_url}' is non-existent")
+                raise Exception(
+                    f"Local file path '{self._openid_configuration_url}' is non-existent"
+                )
 
         if app is not None:
             self.init_app(app)
@@ -154,23 +167,33 @@ class OpenID(object):
         @app.before_serving
         async def setup():
             # Read/Fetch OIDC configuration JSON from disk or URL
-            self._openid_configuration = await self.fetch_config(self._openid_configuration_url)
+            self._openid_configuration = await self.fetch_config(
+                self._openid_configuration_url
+            )
 
             # validate
             for expect in ["token_endpoint", "authorization_endpoint", "jwks_uri"]:
                 if expect not in self._openid_configuration:
-                    raise Exception(f"Expected key '{expect}' to be present in OpenID configuration JSON; not found.")
+                    raise Exception(
+                        f"Expected key '{expect}' to be present in OpenID configuration JSON; not found."
+                    )
 
             # fetch key
-            self._openid_keys = await self.fetch_pubkeys(self._openid_configuration["jwks_uri"])
+            self._openid_keys = await self.fetch_pubkeys(
+                self._openid_configuration["jwks_uri"]
+            )
             self._openid_keys_task = asyncio.create_task(self.fetch_pubkey_loop())
 
             # internal route handlers
             app.logger.debug(f"OpenID login URL: {self._route_login_uri}")
-            app.add_url_rule(self._route_login_uri, self.endpoint_name_login, view_func=self.login)
+            app.add_url_rule(
+                self._route_login_uri, self.endpoint_name_login, view_func=self.login
+            )
 
             app.logger.debug(f"OpenID auth URL: {self._route_auth_uri}")
-            app.add_url_rule(self._route_auth_uri, self.endpoint_name_auth, view_func=self.auth)
+            app.add_url_rule(
+                self._route_auth_uri, self.endpoint_name_auth, view_func=self.auth
+            )
 
         @app.after_serving
         async def teardown():
@@ -181,8 +204,11 @@ class OpenID(object):
     def init_app(self, app: Quart) -> None:
         try:
             from quart_session.sessions import SessionInterface
+
             if not isinstance(app.session_interface, SessionInterface):
-                raise Exception("Please setup quart-session before initializing quart-openid.")
+                raise Exception(
+                    "Please setup quart-session before initializing quart-openid."
+                )
         except ImportError as ex:
             raise Exception("quart-session missing; `pip install quart-session`")
 
@@ -205,14 +231,16 @@ class OpenID(object):
             if not doc:
                 raise Exception(f"empty document")
         except Exception as ex:
-            raise Exception(f"Could not fetch OpenID configuration "
-                            f"JSON from {url} - {ex}")
+            raise Exception(
+                f"Could not fetch OpenID configuration " f"JSON from {url} - {ex}"
+            )
 
         if use_cache:
             await self._cache.set(
                 key=self._config_cache_key,
                 value=json.dumps(doc),
-                expiry=self._config_cache_time)
+                expiry=self._config_cache_time,
+            )
         return doc
 
     async def fetch_pubkeys(self, url: str) -> List[dict]:
@@ -225,7 +253,7 @@ class OpenID(object):
             doc = await self._cache.get(key=self._jwks_cache_key)
             if doc:
                 blob = json.loads(doc)
-                return blob['keys']
+                return blob["keys"]
 
         try:
             doc = await self.json_get(url)
@@ -240,7 +268,8 @@ class OpenID(object):
             await self._cache.set(
                 key=self._jwks_cache_key,
                 value=json.dumps(doc),
-                expiry=self._config_cache_time)
+                expiry=self._config_cache_time,
+            )
         return doc["keys"]
 
     async def fetch_pubkey_loop(self):
@@ -273,8 +302,10 @@ class OpenID(object):
         if not self.client_secret:
             raise Exception("client_secret required to initiate confidential flow.")
         if not self._fn_after_token:
-            raise Exception("`@openid.after_token()` callback missing, please "
-                            "define a token handler.")
+            raise Exception(
+                "`@openid.after_token()` callback missing, please "
+                "define a token handler."
+            )
 
         nonce = None
         if self._nonce:
@@ -282,12 +313,14 @@ class OpenID(object):
             session[self._nonce_session_key] = nonce
 
         url_auth = self._openid_configuration["authorization_endpoint"]
-        scopes = ' '.join(scopes if scopes else self.scopes)
+        scopes = " ".join(scopes if scopes else self.scopes)
 
-        url = f"{url_auth}?" \
-              f"client_id={self.client_id}&" \
-              f"redirect_uri={self.redirect_uri}&" \
-              f"response_type=code"
+        url = (
+            f"{url_auth}?"
+            f"client_id={self.client_id}&"
+            f"redirect_uri={self.redirect_uri}&"
+            f"response_type=code"
+        )
 
         if nonce:
             url += f"&nonce={nonce}"
@@ -299,6 +332,12 @@ class OpenID(object):
             url += f"&scopes={scopes}"
         else:
             url += f"&scope={scopes}"
+
+        if self.provider == PROVIDER_OKTA:
+            # Okta require us to provider _some_ value for state
+            # This is a quick hack to make it work
+            self._state = uuid.uuid4().hex
+            url += f"&state={self._state}"
 
         self.app.logger.debug(f"login redirection to {url}")
         return redirect(url)
@@ -313,7 +352,15 @@ class OpenID(object):
             self.app.logger.error(f"redirect error '{error}' {description}")
             return f"{error}, check logs", 500
 
-        for expect in ["code", "session_state"]:
+        expected_args = ["code", "session_state"]
+        if self.provider == PROVIDER_OKTA:
+            # Special again, but we're not validating anything in this hack
+            expected_args = ["code"]
+
+            if "state" not in request.args:
+                raise Exception("Missing 'state' argument")
+
+        for expect in expected_args:
             if expect not in request.args:
                 msg = f"Missing '{expect}' argument on"
                 raise Exception(msg)
@@ -325,13 +372,15 @@ class OpenID(object):
             "code": request.args["code"],
             "redirect_uri": self.redirect_uri,
             "client_id": self.client_id,
-            "client_secret": self.client_secret
+            "client_secret": self.client_secret,
         }
 
         try:
             resp = await self.json_post(url, data=data, raise_status=False, json=False)
             if "error" in resp:
-                raise Exception(f"{resp['error']}: {resp.get('error_description', 'unknown error')}")
+                raise Exception(
+                    f"{resp['error']}: {resp.get('error_description', 'unknown error')}"
+                )
         except Exception as ex:
             raise Exception(ex)
 
@@ -351,11 +400,11 @@ class OpenID(object):
                 raise Exception(f"Invalid JWT header for token {access_token}")
 
         # verify we actually have the key id
-        key_id = access_token_header['kid']
+        key_id = access_token_header["kid"]
         if key_id not in self._get_keyids:
             # unknown kid, attempt to refresh OIDC keys
-            keys = await self.fetch_pubkeys(self._openid_configuration['jwks_uri'])
-            if not keys or key_id not in [k['kid'] for k in keys]:
+            keys = await self.fetch_pubkeys(self._openid_configuration["jwks_uri"])
+            if not keys or key_id not in [k["kid"] for k in keys]:
                 raise Exception("Could not validate token; unknown kid")
             self._openid_keys = keys
 
@@ -365,7 +414,7 @@ class OpenID(object):
                 token_decoded = OpenID.decode_token(token)
                 if "nonce" not in token_decoded:
                     raise Exception(f"Missing nonce in {token}")
-                if token_decoded['nonce'] != nonce:
+                if token_decoded["nonce"] != nonce:
                     raise Exception("Bad nonce")
             session.pop(self._nonce_session_key)
 
@@ -373,52 +422,72 @@ class OpenID(object):
 
     async def user_info(self, access_token):
         import aiohttp
+
         url = self._openid_configuration["userinfo_endpoint"]
         _headers = {
             "User-Agent": self._user_agent,
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": f"Bearer {access_token}",
         }
         async with aiohttp.ClientSession(
-                headers=_headers,
-                conn_timeout=self._timeout_connect,
-                read_timeout=self._timeout_read) as session:
+            headers=_headers,
+            conn_timeout=self._timeout_connect,
+            read_timeout=self._timeout_read,
+        ) as session:
             async with session.get(url) as resp:
                 print("Status:", resp.status)
-                print("Content-type:", resp.headers.get('content-type'))
+                print("Content-type:", resp.headers.get("content-type"))
                 return await resp.json()
 
-    async def json_get(self, url: str, token: str = None, raise_status: bool = True) -> dict:
+    async def json_get(
+        self, url: str, token: str = None, raise_status: bool = True
+    ) -> dict:
         import aiohttp
+
         _headers = {"User-Agent": self._user_agent}
         if token:
             _headers["Authorization"] = f"Bearer {token}"
 
         async with aiohttp.ClientSession(
-                headers=_headers,
-                conn_timeout=self._timeout_connect,
-                read_timeout=self._timeout_read) as session:
+            headers=_headers,
+            conn_timeout=self._timeout_connect,
+            read_timeout=self._timeout_read,
+        ) as session:
             async with session.get(url) as resp:
                 if raise_status:
                     resp.raise_for_status()
                 return await resp.json()
 
-    async def json_post(self, url: str, token: str = None, data: dict = None, raise_status: bool = True, json: bool = True) -> dict:
+    async def json_post(
+        self,
+        url: str,
+        token: str = None,
+        data: dict = None,
+        raise_status: bool = True,
+        json: bool = True,
+    ) -> dict:
         import aiohttp
+
         _headers = {"User-Agent": self._user_agent}
         if token:
             _headers["Authorization"] = f"Bearer {token}"
 
         async with aiohttp.ClientSession(
-                headers=_headers,
-                conn_timeout=self._timeout_connect,
-                read_timeout=self._timeout_read) as session:
+            headers=_headers,
+            conn_timeout=self._timeout_connect,
+            read_timeout=self._timeout_read,
+        ) as session:
             _data = {"json": data} if json else {"data": data}
             async with session.post(url, **_data) as resp:
                 if raise_status:
                     resp.raise_for_status()
                 return await resp.json()
 
-    def verify_token(self, token: str, algorithms: Union[List[str], str] = 'RS256', audience: str = 'account') -> dict:
+    def verify_token(
+        self,
+        token: str,
+        algorithms: Union[List[str], str] = "RS256",
+        audience: str = "account",
+    ) -> dict:
         """
         Verifies RS256 token with known pubkey(s)
         :param token: JWS
@@ -427,7 +496,9 @@ class OpenID(object):
         :return: the decoded/verified token
         """
         try:
-            payload = jose_jwt.decode(token, self._openid_keys, algorithms=algorithms, audience=audience)
+            payload = jose_jwt.decode(
+                token, self._openid_keys, algorithms=algorithms, audience=audience
+            )
             return payload
         except Exception as ex:
             msg = f"Invalid payload for token: {token} - {ex}"
@@ -450,7 +521,7 @@ class OpenID(object):
         if "x-forwarded-proto" in headers:
             scheme = headers["x-forwarded-proto"]
         if "x-forwarded-port" in headers:
-            port = int(headers['x-forwarded-port'])
+            port = int(headers["x-forwarded-port"])
         port = f":{port}" if isinstance(port, int) else ""
         return f"{scheme}://{request.host}{port}"
 
@@ -481,12 +552,12 @@ class OpenID(object):
 
     @property
     def _get_keyids(self):
-        return [k['kid'] for k in self._openid_keys]
+        return [k["kid"] for k in self._openid_keys]
 
     @decorator_parametrized
     def after_token(self, view_func, *args, **kwargs):
         self._fn_after_token = view_func
 
     async def _json_read(self, path: str):
-        async with aiofiles.open(path, mode='r') as f:
+        async with aiofiles.open(path, mode="r") as f:
             return json.loads(await f.read())
