@@ -31,5 +31,6 @@ PROVIDER_DEFAULT = 0
 PROVIDER_KEYCLOAK = 0
 PROVIDER_AZURE_AD_V1 = 1
 PROVIDER_AZURE_AD_V2 = 2
+PROVIDER_OKTA = 3
 
 from quart_session_openid.openid import OpenID
